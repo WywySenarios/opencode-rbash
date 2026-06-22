@@ -222,6 +222,46 @@ describe("executeCommand — timeout", () => {
     })
     expect(result.exitCode).toBe(0)
   })
+
+  it("kills the underlying process when command times out", async () => {
+    let killed = false
+
+    const killableExecutor = {
+      spawn: vi.fn(
+        async (
+          _command: string,
+          options: ExecuteOptions
+        ): Promise<ExecuteResult> => {
+          // If the executor receives an abort signal, register the kill handler
+          options.signal?.addEventListener("abort", () => {
+            killed = true
+          })
+
+          // Simulate a long-running command that never completes
+          await new Promise((resolve) => setTimeout(resolve, 50_000))
+          return {
+            command: _command,
+            cwd: options.workdir ?? "/tmp",
+            exitCode: 0,
+            output: "",
+            truncated: false,
+          }
+        }
+      ),
+    }
+
+    const result = await executeCommand("sleep 100", {
+      config: MOCK_CONFIG,
+      binDir: "/tmp/opencode-bash/test",
+      timeout: 10, // 10ms timeout — well under the 50s process
+      executor: killableExecutor,
+    })
+
+    // The timeout must be detected
+    expect(result.timedOut).toBe(true)
+    // The underlying process must be killed, not left as an orphan
+    expect(killed).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------

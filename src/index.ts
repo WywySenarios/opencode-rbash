@@ -19,7 +19,7 @@ import { loadConfig, type AllowEntry, type Config } from "./config.js"
 import { validateCommand } from "./validate.js"
 import { validateScriptCommand, SCRIPTS_TOOL_NAME } from "./scripts.js"
 import { initSymlinks, type InitResult } from "./init.js"
-import { captureOutput, executeCommand, type ExecuteResult } from "./execute.js"
+import { captureOutput, executeCommand, type ExecuteResult, type ExecuteOptions } from "./execute.js"
 import { createWriteLock } from "./write-lock.js"
 
 // ---------------------------------------------------------------------------
@@ -96,15 +96,27 @@ async function systemWhich(name: string): Promise<string | null> {
   }
 }
 
+/**
+ * Wire an abort signal so the child process is killed when the signal fires.
+ * This is a no-op when no signal is provided.
+ */
+function killOnAbort(
+  signal: AbortSignal | undefined,
+  proc: import("node:child_process").ChildProcess
+): void {
+  signal?.addEventListener("abort", () => { proc.kill() }, { once: true })
+}
+
 /** Create an executor that spawns commands via rbash with a restricted PATH. */
 function createExecutor(binDir: string) {
   return {
-    spawn: (command: string, options: { workdir?: string }): Promise<ExecuteResult> => {
+    spawn: (command: string, options: ExecuteOptions): Promise<ExecuteResult> => {
       const proc = spawn(RBASH_PATH, ["-c", command], {
         cwd: options.workdir,
         env: { PATH: binDir },
         stdio: ["ignore", "pipe", "pipe"],
       })
+      killOnAbort(options.signal, proc)
       return captureOutput(proc, command, options.workdir ?? process.cwd())
     },
   }
@@ -114,7 +126,7 @@ function createExecutor(binDir: string) {
  * Sets the working directory inside the container via `-w` when specified. */
 function createDockerExecutor(container: string) {
   return {
-    spawn: (command: string, options: { workdir?: string }): Promise<ExecuteResult> => {
+    spawn: (command: string, options: ExecuteOptions): Promise<ExecuteResult> => {
       const dockerArgs = ["exec"]
       if (options.workdir) {
         dockerArgs.push("-w", options.workdir)
@@ -124,6 +136,7 @@ function createDockerExecutor(container: string) {
       const proc = spawn("docker", dockerArgs, {
         stdio: ["ignore", "pipe", "pipe"],
       })
+      killOnAbort(options.signal, proc)
       return captureOutput(proc, command, options.workdir ?? process.cwd(),
         `docker exec for container '${container}'`)
     },
@@ -135,11 +148,12 @@ function createDockerExecutor(container: string) {
  * access the full system PATH — not just allowlisted executables. */
 function createBashExecutor() {
   return {
-    spawn: (command: string, options: { workdir?: string }): Promise<ExecuteResult> => {
+    spawn: (command: string, options: ExecuteOptions): Promise<ExecuteResult> => {
       const proc = spawn(BASH_PATH, ["-c", command], {
         cwd: options.workdir,
         stdio: ["ignore", "pipe", "pipe"],
       })
+      killOnAbort(options.signal, proc)
       return captureOutput(proc, command, options.workdir ?? process.cwd())
     },
   }

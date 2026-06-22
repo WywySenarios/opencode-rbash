@@ -4,7 +4,7 @@
  * Runs commands via an injectable executor (which the real plugin
  * bridges to rbash with restricted PATH). Handles:
  *   - Output truncation (max_lines, max_bytes)
- *   - Timeout (via Promise.race)
+ *   - Timeout (via Promise.race + AbortController kills the child process)
  *   - Capturing stdout/stderr
  *   - Merged output with truncation notice
  */
@@ -20,6 +20,7 @@ export type ExecuteOptions = {
   timeout?: number
   max_lines?: number
   max_bytes?: number
+  signal?: AbortSignal
 }
 
 export type ExecuteResult = {
@@ -165,9 +166,14 @@ export async function executeCommand(
   const effectiveTimeout =
     timeout ?? config.settings?.timeout_ms ?? 120_000
 
+  // Create an AbortController so the timeout can signal the executor
+  // to kill the underlying child process when the deadline is exceeded
+  const controller = new AbortController()
+
   const execOptions: ExecuteOptions = {
     workdir: resolvedCwd,
     timeout: effectiveTimeout,
+    signal: controller.signal,
   }
 
   // Execute with timeout
@@ -183,6 +189,8 @@ export async function executeCommand(
     result = await Promise.race([execPromise, timeoutPromise])
   } catch (err) {
     if (err instanceof TimeoutError) {
+      // Signal the executor to kill the child process, then return
+      controller.abort()
       return {
         command,
         cwd: resolvedCwd,
