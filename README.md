@@ -1,4 +1,4 @@
-# @opencode-ai/bash-restricted
+# @wywy-codes/rbash
 
 Restricted bash plugin intended for protecting read-only files with three defense layers: executable allowlist, pipe-chain validation, and rbash restricted PATH.
 

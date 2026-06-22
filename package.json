@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/bash-restricted",
+  "name": "@wywy-codes/rbash",
   "version": "0.1.0",
   "description": "Restricted bash tool plugin for opencode with three-layer defense (allowlist + tree-sitter + rbash)",
   "type": "module",
