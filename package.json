@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@opencode-ai/bash-restricted",
+  "version": "0.1.0",
+  "description": "Restricted bash tool plugin for opencode with three-layer defense (allowlist + tree-sitter + rbash)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.17.8",
+    "tree-sitter-bash": "^0.20.0",
+    "web-tree-sitter": "^0.20.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "5.8.2",
+    "vitest": "^3.1.3"
+  }
+}
