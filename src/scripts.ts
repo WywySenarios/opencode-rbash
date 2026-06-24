@@ -4,9 +4,13 @@
  * Provides a separate tool for running project scripts with configured
  * interpreters (e.g., python, node, deno). The command must match the
  * pattern: <interpreter> <script-path> with exactly one argument.
+ *
+ * Interpreter names support glob-style wildcards (* matches any sequence
+ * of characters) so the allowlist can match families of interpreters
+ * (e.g. "python*" matches python, python3, python3.11, etc.).
  */
 
-import { extractWord, type ValidationResult } from "./validate.js"
+import { extractWord, matchesGlob, type ValidationResult } from "./validate.js"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,8 +66,8 @@ export function validateScriptCommand(
     }
   }
 
-  // Interpreter must be in the configured list
-  if (!interpreters.includes(interpreter)) {
+  // Interpreter must match at least one pattern in the configured list
+  if (!interpreters.some((pattern) => matchesGlob(pattern, interpreter))) {
     return {
       valid: false,
       error: `'${interpreter}' is not in the configured script interpreters`,

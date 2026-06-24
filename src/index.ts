@@ -18,6 +18,7 @@ import { promisify } from "node:util"
 import { loadConfig, type AllowEntry, type Config } from "./config.js"
 import { validateCommand } from "./validate.js"
 import { validateScriptCommand, SCRIPTS_TOOL_NAME } from "./scripts.js"
+import { isTrustedAgent } from "./agent-auth.js"
 import { initSymlinks, type InitResult } from "./init.js"
 import { captureOutput, executeCommand, type ExecuteResult, type ExecuteOptions } from "./execute.js"
 import { createWriteLock } from "./write-lock.js"
@@ -165,8 +166,9 @@ function createBashExecutor() {
 
 /**
  * Builds a dynamic tool description from the allowlist config.
- * Lists allowed executables and their pipe targets so the agent knows
- * exactly what is available — no implementation details leaked.
+ * Lists allowed executables (with pipe targets) and script path
+ * patterns so the agent knows exactly what is available — no
+ * implementation details leaked.
  */
 function buildDescription(config: Config): string {
   const lines: string[] = [
@@ -183,6 +185,16 @@ function buildDescription(config: Config): string {
       lines.push(`  ${name} (can pipe to: ${entry.pipe_to.join(", ")})`)
     } else {
       lines.push(`  ${name}`)
+    }
+  }
+
+  if (config.scripts && config.scripts.length > 0) {
+    lines.push(
+      "",
+      "Allow-listed scripts:",
+    )
+    for (const pattern of config.scripts) {
+      lines.push(`  ${pattern}`)
     }
   }
 
@@ -243,11 +255,13 @@ async function executeWithConfig(
   userWritableTargetsRef?: { current: string[] },
 ): Promise<ExecuteResult> {
   if (!initRef.current) {
+    const tInit = process.hrtime.bigint()
     initRef.current = await initSymlinks({
       config,
       projectRoot,
       resolver: { which: systemWhich },
     })
+    perf("initSymlinks (first call)", tInit)
     // Propagate discovered user-writable targets so the write-lock hook
     // can block writes through symlinks to those paths
     if (userWritableTargetsRef) {
@@ -286,21 +300,41 @@ function formatOutput(result: ExecuteResult, cachedInit: InitResult): string {
 }
 
 // ---------------------------------------------------------------------------
+// Startup instrumentation
+// ---------------------------------------------------------------------------
+
+/**
+ * When `OPCODE_BASH_PERF=1` is set, log timing information for key startup
+ * phases to stderr. Each line is prefixed with `[perf]` for easy grepping.
+ */
+const PERF_ENABLED = !!process.env.OPCODE_BASH_PERF
+
+function perf(label: string, start: bigint): void {
+  if (!PERF_ENABLED) return
+  const elapsed = Number(process.hrtime.bigint() - start) / 1e6
+  console.error(`[perf] ${label}: ${elapsed.toFixed(2)} ms`)
+}
+
+// ---------------------------------------------------------------------------
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
 const plugin: Plugin = async (input) => {
+  const t0 = process.hrtime.bigint()
   let cachedConfig: Config | null = null
 
   // Load config eagerly so the tool description can be built dynamically
   const projectRoot = input.worktree || input.directory
+  const t1 = process.hrtime.bigint()
   cachedConfig = loadConfig({ projectRoot })
+  perf("loadConfig", t1)
 
   // Mutable ref for lazy symlink initialisation, shared by both tools
   const initRef: { current: InitResult | null } = { current: null }
   // Mutable ref for user-writable symlink targets discovered by initSymlinks
   const userWritableRef: { current: string[] } = { current: [] }
 
+  const t2 = process.hrtime.bigint()
   const tools: Record<string, ReturnType<typeof tool>> = {
     bash: tool({
       description: buildDescription(cachedConfig),
@@ -314,23 +348,37 @@ const plugin: Plugin = async (input) => {
       ): Promise<ToolResult> {
         const projectRoot = ctx.worktree || ctx.directory
 
-        // Validate command against allowlist
-        const validation = validateCommand(args.command, cachedConfig.allow)
-        if (!validation.valid) {
-          return {
-            title: "Command Rejected",
-            output: `Error: ${validation.error}`,
-            metadata: { command: args.command, rejected: true },
+        // Check if the calling agent is trusted (bypasses bash restrictions)
+        const isTrusted = isTrustedAgent(
+          ctx.agent,
+          cachedConfig.unrestricted_agents ?? []
+        )
+
+        // Validate command against allowlist (skipped for trusted agents)
+        let matchedScript = false
+        if (!isTrusted) {
+          const validation = validateCommand(args.command, cachedConfig.allow, cachedConfig.scripts)
+          if (!validation.valid) {
+            return {
+              title: "Command Rejected",
+              output: `Error: ${validation.error}`,
+              metadata: { command: args.command, rejected: true },
+            }
           }
+          matchedScript = validation.matchedScript ?? false
         }
 
         // Execute via shared logic (initRef lazily caches symlinks)
+        // Trusted agents and script-pattern commands use regular bash with
+        // system PATH (no rbash restrictions — rbash rejects path-based
+        // commands like "scripts/true.sh").
+        const useBash = isTrusted || matchedScript
         const result = await executeWithConfig(
           args,
           cachedConfig,
           projectRoot,
           initRef,
-          false,
+          useBash,
           userWritableRef,
         )
 
@@ -406,13 +454,20 @@ const plugin: Plugin = async (input) => {
     })
   }
 
+  perf("buildDescription", t2)
+
+  const t3 = process.hrtime.bigint()
+  const writeLock = createWriteLock({
+    projectRoot,
+    lockedPaths: cachedConfig.locked_scripts ?? [],
+    dynamicPathsRef: userWritableRef,
+  })
+  perf("createWriteLock", t3)
+  perf("plugin() total", t0)
+
   return {
     tool: tools,
-    ...createWriteLock({
-      projectRoot,
-      lockedPaths: cachedConfig.locked_scripts ?? [],
-      dynamicPathsRef: userWritableRef,
-    }),
+    ...writeLock,
   }
 }
 

@@ -2,8 +2,9 @@
  * Config loader for restricted bash tool.
  *
  * Reads `.opencode/bash-restricted.jsonc` from the project root,
- * with fallback to a global config file. Validates structure and
- * applies defaults for missing settings.
+ * with fallback to a global config file at `~/.config/opencode/`,
+ * then to a dotfiles-managed config at `$HOME/dotfiles/.opencode/`.
+ * Validates structure and applies defaults for missing settings.
  *
  * The `allow` field accepts two shapes:
  *   - `Record<string, AllowEntry>` — object form with optional pipe_to rules
@@ -31,8 +32,12 @@ export type AllowConfig = Record<string, AllowEntry>
 
 export type Config = {
   allow: AllowConfig
+  /** Script path patterns (glob-style, e.g. "scripts/**"). Matched against
+   * the command's first word. Executables in "allow" take precedence. */
+  scripts?: string[]
   script_interpreters?: string[]
   locked_scripts?: string[]
+  unrestricted_agents?: string[]
   settings?: {
     timeout_ms?: number
     workdir_policy?: string
@@ -134,6 +139,22 @@ function validateConfig(config: Config, source: string): void {
     }
   }
 
+  // Validate scripts if present
+  if (config.scripts !== undefined) {
+    if (!Array.isArray(config.scripts)) {
+      throw new Error(
+        `Config at ${source}: scripts must be an array of strings`
+      )
+    }
+    for (const item of config.scripts) {
+      if (typeof item !== "string") {
+        throw new Error(
+          `Config at ${source}: scripts entries must be strings, got ${typeof item}`
+        )
+      }
+    }
+  }
+
   // Validate script_interpreters if present
   if (config.script_interpreters !== undefined) {
     if (!Array.isArray(config.script_interpreters)) {
@@ -166,6 +187,22 @@ function validateConfig(config: Config, source: string): void {
       if (typeof item !== "string") {
         throw new Error(
           `Config at ${source}: locked_scripts entries must be strings, got ${typeof item}`
+        )
+      }
+    }
+  }
+
+  // Validate unrestricted_agents if present
+  if (config.unrestricted_agents !== undefined) {
+    if (!Array.isArray(config.unrestricted_agents)) {
+      throw new Error(
+        `Config at ${source}: unrestricted_agents must be an array of strings`
+      )
+    }
+    for (const item of config.unrestricted_agents) {
+      if (typeof item !== "string") {
+        throw new Error(
+          `Config at ${source}: unrestricted_agents entries must be strings, got ${typeof item}`
         )
       }
     }
@@ -262,19 +299,37 @@ function loadFromPath(path: string): Config | null {
   return applyDefaults(bag as Config)
 }
 
+// Cache keyed by projectRoot (and optionally globalConfigPath) so repeated
+// calls — e.g. during hot reload — skip the three-location I/O fallback chain.
+const configCache = new Map<string, Config>()
+
+function cacheKey(projectRoot: string, globalConfigPath?: string): string {
+  return globalConfigPath
+    ? `${projectRoot}\x00${globalConfigPath}`
+    : projectRoot
+}
+
 /**
  * Loads the restricted bash config from the project directory,
- * falling back to a global config file if the project config is missing.
+ * falling back to a global config file (`~/.config/opencode/...`),
+ * then to a dotfiles-managed config (`$HOME/dotfiles/.opencode/...`).
  *
  * Synchronous — called once at plugin startup.
+ * Results are cached so repeated lookups skip the fallback I/O chain.
  */
 export function loadConfig(options: LoadConfigOptions): Config {
   const { projectRoot, globalConfigPath } = options
+  const key = cacheKey(projectRoot, globalConfigPath)
+  const cached = configCache.get(key)
+  if (cached) return cached
 
   // Try project config first
   const projectConfigPath = configFilePath(projectRoot)
   const projectConfig = loadFromPath(projectConfigPath)
-  if (projectConfig) return projectConfig
+  if (projectConfig) {
+    configCache.set(key, projectConfig)
+    return projectConfig
+  }
 
   // Fall back to global config
   const rawGlobalPath =
@@ -283,14 +338,31 @@ export function loadConfig(options: LoadConfigOptions): Config {
 
   const globalPath = resolveGlobalConfigPath(rawGlobalPath)
   const globalConfig = loadFromPath(globalPath)
-  if (globalConfig) return globalConfig
+  if (globalConfig) {
+    configCache.set(key, globalConfig)
+    return globalConfig
+  }
 
-  // Neither exists — panic
+  // Fall back to dotfiles config ($HOME/dotfiles/.opencode/bash-restricted.jsonc)
+  const dotfilesPath = join(
+    homedir(),
+    "dotfiles",
+    ".opencode",
+    "bash-restricted.jsonc"
+  )
+  const dotfilesConfig = loadFromPath(dotfilesPath)
+  if (dotfilesConfig) {
+    configCache.set(key, dotfilesConfig)
+    return dotfilesConfig
+  }
+
+  // None found — panic
   throw new Error(
     `Restricted bash tool cannot start — no config found.\n` +
       `Checked:\n` +
       `  - ${projectConfigPath} (project)\n` +
       `  - ${globalPath} (global)\n` +
+      `  - ${dotfilesPath} (dotfiles)\n` +
       `Create one of these files with an executable allowlist.`
   )
 }

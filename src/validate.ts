@@ -7,7 +7,9 @@
  * prefixes) and validates each executable against an allowlist
  * with optional pipe_target rules.
  *
- * Step A — Executable check: every command_name must be in allowlist
+ * Step A — Executable check: every command_name must be in the
+ *   allowlist, or must match a configured script path pattern.
+ *   Executables in the allowlist take precedence over script patterns.
  * Step B — Pipe chain check: every pipe A | B must satisfy A's pipe_to
  *
  * Normalization pipeline (applied in order):
@@ -23,12 +25,43 @@
 import type { AllowConfig } from "./config.js"
 
 // ---------------------------------------------------------------------------
+// Glob matching
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests whether a value matches a simple glob pattern containing `*`
+ * wildcards. `*` matches any sequence of characters (including none).
+ * Characters that are special in regular expressions are escaped so they
+ * are matched literally (e.g. `python3.11` matches `python3.11` literally,
+ * not as a regex).
+ *
+ * Patterns without `*` are matched exactly (===).
+ *
+ * Used in two contexts:
+ *   1. Script interpreter matching (e.g. "python*" matches python, python3)
+ *   2. Script path pattern matching (e.g. "scripts/**" matches scripts/run/test.sh)
+ *
+ * @param pattern - Glob pattern (e.g. "scripts/**", "python*", "*.py")
+ * @param value   - The string to test
+ */
+export function matchesGlob(pattern: string, value: string): boolean {
+  // Escape regex-special characters, then convert * to .*
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+  const regexStr = "^" + escaped.replace(/\*/g, ".*") + "$"
+  return new RegExp(regexStr).test(value)
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type ValidationResult = {
   valid: boolean
   error?: string
+  /** True when the command matched a script path pattern (not an allowlist
+   * executable). Commands matching script patterns need regular bash to
+   * execute, because rbash rejects path-based commands. */
+  matchedScript?: boolean
 }
 
 type ParsedExecutable = {
@@ -643,7 +676,8 @@ function validatePipePairs(
 
 export function validateCommand(
   command: string,
-  allowlist: AllowConfig
+  allowlist: AllowConfig,
+  scripts?: string[]
 ): ValidationResult {
   const normalized = stripInlineComments(normalizeContinuations(command))
   if (!normalized || !normalized.trim()) {
@@ -691,14 +725,27 @@ export function validateCommand(
 
   // Step A — Executable check (include subshell executables)
   const hasWildcard = "*" in allowlist
+  let matchedScript = false
   for (const exec of allExecs) {
     // Wildcard "*" in the allowlist means any executable is permitted.
     // Pipe restrictions (Step B) are still enforced for safety.
     if (hasWildcard) continue
     if (exec.isPath) return rejectPath()
     if (exec.isDynamic) return rejectDynamic(exec.name)
-    if (!(exec.name in allowlist)) return rejectNotInAllowlist(exec.name)
+
+    // Executable found in allowlist — treat as executable (including pipe rules)
+    if (exec.name in allowlist) continue
+
+    // Not in allowlist — check if the command matches a script path pattern.
+    // Executables take precedence, so this only applies if the name is NOT
+    // in the allowlist.
+    if (scripts && scripts.length > 0 && scripts.some((p) => matchesGlob(p, exec.name))) {
+      matchedScript = true
+      continue
+    }
+
+    return rejectNotInAllowlist(exec.name)
   }
 
-  return { valid: true }
+  return { valid: true, matchedScript: matchedScript || undefined }
 }
