@@ -295,3 +295,104 @@ describe("validateCommand — edge cases", () => {
     expect(result.valid).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Script path pattern matching
+// ---------------------------------------------------------------------------
+
+describe("validateCommand — script path patterns", () => {
+  const SCRIPT_PATTERNS = ["scripts/**", "./scripts/*"]
+
+  const EXEC_ONLY_ALLOWLIST: AllowConfig = {
+    ls: {},
+    echo: {},
+    cat: { pipe_to: ["grep", "wc"] },
+    grep: {},
+    wc: {},
+  }
+
+  it("allows command matching a script path pattern when not in allowlist", () => {
+    const result = validateCommand(
+      "scripts/run/test.sh --arg",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(true)
+  })
+
+  it("allows command matching a deeper script path", () => {
+    const result = validateCommand(
+      "scripts/deploy/build.sh",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(true)
+  })
+
+  it("rejects command not matching any script pattern when not in allowlist", () => {
+    const result = validateCommand(
+      "other/script.sh",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(false)
+    expect(result.error).toMatch(/not in.*allowlist/i)
+  })
+
+  it("executable in allowlist takes precedence over script pattern match", () => {
+    // "ls" is both in the allowlist AND would match "scripts/**" if it were
+    // treated as a script. But executables take precedence, so ls is
+    // validated as an executable — pipe_to rules from the allowlist apply.
+    const allowlistWithPipe: AllowConfig = {
+      ...EXEC_ONLY_ALLOWLIST,
+      // "cat" has pipe_to restrictions — these must be enforced
+    }
+    // cat has pipe_to: ["grep", "wc"] — piping to an unlisted target fails
+    const result = validateCommand(
+      "cat data.txt | echo",
+      allowlistWithPipe,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(false)
+    expect(result.error).toMatch(/pipe/i)
+  })
+
+  it("allows executable in allowlist regardless of script patterns", () => {
+    // Even with scripts configured, allowlist executables work normally
+    const result = validateCommand(
+      "ls -la",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(true)
+  })
+
+  it("rejects disallowed command even when scripts list is empty", () => {
+    const result = validateCommand(
+      "vim file.txt",
+      EXEC_ONLY_ALLOWLIST,
+      []
+    )
+    expect(result.valid).toBe(false)
+  })
+
+  it("handles command with pipe containing script path", () => {
+    // Commands that start with a script path should be allowed
+    const result = validateCommand(
+      "scripts/deploy.sh --env prod",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(true)
+  })
+
+  it("rejects absolute path even when it matches script pattern", () => {
+    // Absolute paths are always rejected — use relative script paths
+    const result = validateCommand(
+      "/absolute/path/to/scripts/test.sh",
+      EXEC_ONLY_ALLOWLIST,
+      SCRIPT_PATTERNS
+    )
+    expect(result.valid).toBe(false)
+  })
+})

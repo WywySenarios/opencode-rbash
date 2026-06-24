@@ -109,6 +109,15 @@ describe("loadConfig", () => {
 // ---------------------------------------------------------------------------
 
 describe("loadConfig — missing config", () => {
+  beforeAll(() => {
+    // Stub HOME so we don't accidentally find the real system dotfiles config
+    vi.stubEnv("HOME", "/tmp/test-missing-config-home")
+  })
+
+  afterAll(() => {
+    vi.unstubAllEnvs()
+  })
+
   it("falls back to global config when project config is missing", () => {
     const config = loadConfig({
       projectRoot: "/tmp/test-project-no-local",
@@ -118,7 +127,7 @@ describe("loadConfig — missing config", () => {
     expect(config.allow).toHaveProperty("ls")
   })
 
-  it("throws when neither project nor global config exists", () => {
+  it("throws when neither project, global, nor dotfiles config exists", () => {
     expect(() =>
       loadConfig({
         projectRoot: "/tmp/test-project-nonexistent",
@@ -127,13 +136,22 @@ describe("loadConfig — missing config", () => {
     ).toThrow("no config found")
   })
 
-  it("throws with paths of both checked locations in the error message", () => {
+  it("throws with paths of all three checked locations in the error message", () => {
     expect(() =>
       loadConfig({
         projectRoot: "/tmp/test-project-nonexistent",
         globalConfigPath: "/tmp/test-global-nonexistent",
       })
     ).toThrow(/bash-restricted\.jsonc/)
+  })
+
+  it("error message includes the dotfiles fallback path", () => {
+    expect(() =>
+      loadConfig({
+        projectRoot: "/tmp/test-project-nonexistent",
+        globalConfigPath: "/tmp/test-global-nonexistent",
+      })
+    ).toThrow(/dotfiles/)
   })
 })
 
@@ -341,5 +359,312 @@ describe("loadConfig — script_interpreters", () => {
     expect(config.allow).toHaveProperty("ls")
     // No script_interpreters should not cause an error
     expect(config.script_interpreters).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadConfig — unrestricted_agents
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — unrestricted_agents", () => {
+  const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
+  const { join } = require("node:path")
+  const testDir = "/tmp/test-project-unrestricted-agents"
+
+  beforeAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    mkdirSync(join(testDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(testDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        unrestricted_agents: ["plan", "build"],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+  })
+
+  afterAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  it("loads config with unrestricted_agents array", () => {
+    // RED: Config type does not yet include unrestricted_agents.
+    // This test proves the field is not yet parsed/returned.
+    const config = loadConfig({ projectRoot: testDir })
+    expect(config.unrestricted_agents).toBeDefined()
+    expect(Array.isArray(config.unrestricted_agents)).toBe(true)
+  })
+
+  it("preserves unrestricted_agents values in the parsed config", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    expect(config.unrestricted_agents).toEqual(["plan", "build"])
+  })
+
+  it("unrestricted_agents entries are strings", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    for (const name of config.unrestricted_agents!) {
+      expect(typeof name).toBe("string")
+    }
+  })
+
+  it("rejects unrestricted_agents with non-array values", () => {
+    const badDir = "/tmp/test-project-bad-unrestricted"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        unrestricted_agents: "not-an-array",
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+
+  it("rejects unrestricted_agents with non-string entries", () => {
+    const badDir = "/tmp/test-project-bad-unrestricted-entries"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        unrestricted_agents: [123, true],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadConfig — dotfiles fallback ($HOME/dotfiles/.opencode/...)
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — dotfiles fallback", () => {
+  const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
+  const { join } = require("node:path")
+  const testDir = "/tmp/opencode/test-dotfiles-fallback"
+
+  beforeAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    // Create $HOME/dotfiles/.opencode/bash-restricted.jsonc
+    // This simulates a dotfiles-managed global fallback config
+    mkdirSync(join(testDir, "dotfiles", ".opencode"), { recursive: true })
+    writeFileSync(
+      join(testDir, "dotfiles", ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {}, dotfiles_only_tool: {} },
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+  })
+
+  afterAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    vi.unstubAllEnvs()
+  })
+
+  it("falls back to $HOME/dotfiles/.opencode/bash-restricted.jsonc when project and standard global config are missing", () => {
+    vi.stubEnv("HOME", testDir)
+
+    const config = loadConfig({
+      // Project without a local config
+      projectRoot: join(testDir, "nonexistent-project"),
+      // No globalConfigPath — relies on homedir() to find standard global
+    })
+
+    // The config should be loaded from the dotfiles location
+    expect(config).toBeDefined()
+    expect(config.allow).toHaveProperty("ls")
+    expect(config.allow).toHaveProperty("echo")
+    // Only the dotfiles config has this entry
+    expect(config.allow).toHaveProperty("dotfiles_only_tool")
+    // Default settings should be applied
+    expect(config.settings?.timeout_ms).toBe(120_000)
+    expect(config.settings?.workdir_policy).toBe("project")
+  })
+
+  it("dotfiles fallback is lower priority than explicit globalConfigPath", () => {
+    // When a globalConfigPath IS provided and has a valid config,
+    // it should be used instead of the dotfiles fallback
+    vi.stubEnv("HOME", testDir)
+
+    const config = loadConfig({
+      projectRoot: join(testDir, "nonexistent-project"),
+      globalConfigPath: "/tmp/test-global-config",
+    })
+
+    // Should load from the explicitly provided global path,
+    // not from the dotfiles location
+    expect(config).toBeDefined()
+    expect(config.allow).toHaveProperty("ls")
+    // The dotfiles-only tool should NOT be present
+    expect(config.allow).not.toHaveProperty("dotfiles_only_tool")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadConfig — globalConfigPath directory resolution (.opencode subdirectory)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// loadConfig — scripts field
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — scripts field", () => {
+  const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
+  const { join } = require("node:path")
+  const testDir = "/tmp/test-project-scripts-field-config"
+  const noScriptsDir = "/tmp/test-project-no-scripts-field-config"
+
+  beforeAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    mkdirSync(join(testDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(testDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        scripts: ["scripts/**", "./scripts/*"],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+
+    rmSync(noScriptsDir, { recursive: true, force: true })
+    mkdirSync(join(noScriptsDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(noScriptsDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+  })
+
+  afterAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    rmSync(noScriptsDir, { recursive: true, force: true })
+  })
+
+  it("loads scripts field from config", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    expect(config.scripts).toBeDefined()
+    expect(Array.isArray(config.scripts)).toBe(true)
+    expect(config.scripts).toEqual(["scripts/**", "./scripts/*"])
+  })
+
+  it("scripts entries are strings", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    for (const entry of config.scripts!) {
+      expect(typeof entry).toBe("string")
+    }
+  })
+
+  it("config without scripts field still loads (backward compat)", () => {
+    const config = loadConfig({ projectRoot: noScriptsDir })
+    expect(config.scripts).toBeUndefined()
+  })
+
+  it("rejects scripts with non-array value", () => {
+    const badDir = "/tmp/test-project-scripts-bad-type"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        scripts: "not-an-array",
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+
+  it("rejects scripts with non-string entries", () => {
+    const badDir = "/tmp/test-project-scripts-bad-entries"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        scripts: [123, true],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadConfig — globalConfigPath as directory with .opencode subdirectory
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — globalConfigPath as directory with .opencode subdirectory", () => {
+  const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
+  const { join } = require("node:path")
+  const testDir = "/tmp/test-global-opencode-nested"
+  // Use this HOME to prevent the real dotfiles fallback from being found
+  const isolatedHome = "/tmp/test-global-opencode-home"
+
+  beforeAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    // Create a directory that ONLY has .opencode/bash-restricted.jsonc
+    // (no direct bash-restricted.jsonc at the top level)
+    mkdirSync(join(testDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(testDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { nested_ls: {} },
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    vi.stubEnv("HOME", isolatedHome)
+  })
+
+  afterAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    vi.unstubAllEnvs()
+  })
+
+  it("resolves a directory path by finding .opencode/bash-restricted.jsonc nested inside", () => {
+    // The globalConfigPath points to a directory (not a file).
+    // resolveGlobalConfigPath should detect it's a directory and
+    // look for .opencode/bash-restricted.jsonc inside it.
+    const config = loadConfig({
+      projectRoot: "/tmp/test-project-nonexistent",
+      globalConfigPath: testDir,
+    })
+
+    expect(config).toBeDefined()
+    expect(config.allow).toHaveProperty("nested_ls")
+  })
+
+  it("falls through when directory contains neither bash-restricted.jsonc nor .opencode/ subdirectory", () => {
+    // Create a directory with no config file inside
+    const emptyDir = join(testDir, "empty")
+    mkdirSync(emptyDir, { recursive: true })
+
+    expect(() =>
+      loadConfig({
+        projectRoot: "/tmp/test-project-nonexistent",
+        globalConfigPath: emptyDir,
+      })
+    ).toThrow("no config found")
   })
 })
