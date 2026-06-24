@@ -18,7 +18,7 @@ import { promisify } from "node:util"
 import { loadConfig, type AllowEntry, type Config } from "./config.js"
 import { validateCommand } from "./validate.js"
 import { validateScriptCommand, SCRIPTS_TOOL_NAME } from "./scripts.js"
-import { isTrustedAgent } from "./agent-auth.js"
+import { filterTrustedAgents, isTrustedAgent } from "./agent-auth.js"
 import { initSymlinks, type InitResult } from "./init.js"
 import { captureOutput, executeCommand, type ExecuteResult, type ExecuteOptions } from "./execute.js"
 import { createWriteLock } from "./write-lock.js"
@@ -329,6 +329,13 @@ const plugin: Plugin = async (input) => {
   cachedConfig = loadConfig({ projectRoot })
   perf("loadConfig", t1)
 
+  // Filter trusted_agents to only primary-mode agents (silently excludes
+  // non-primary agents configured by name). Falls back to the raw list when
+  // no agent descriptors are provided (backward compat).
+  const effectiveTrustedAgents = cachedConfig.agents
+    ? filterTrustedAgents(cachedConfig.trusted_agents ?? [], cachedConfig.agents)
+    : cachedConfig.trusted_agents ?? []
+
   // Mutable ref for lazy symlink initialisation, shared by both tools
   const initRef: { current: InitResult | null } = { current: null }
   // Mutable ref for user-writable symlink targets discovered by initSymlinks
@@ -351,7 +358,7 @@ const plugin: Plugin = async (input) => {
         // Check if the calling agent is trusted (bypasses bash restrictions)
         const isTrusted = isTrustedAgent(
           ctx.agent,
-          cachedConfig.unrestricted_agents ?? []
+          effectiveTrustedAgents
         )
 
         // Validate command against allowlist (skipped for trusted agents)

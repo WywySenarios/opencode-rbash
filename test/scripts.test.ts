@@ -140,6 +140,32 @@ describe("validateScriptCommand — invalid: inline code or flags", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Pattern matching (wildcard glob patterns in the interpreters list)
+// ---------------------------------------------------------------------------
+
+describe("validateScriptCommand — pattern matching", () => {
+  it("allows interpreter matching a wildcard pattern", () => {
+    const result = validateScriptCommand("python3 my-script.py", ["python*"])
+    expect(result.valid).toBe(true)
+  })
+
+  it("rejects interpreter that does not match any pattern", () => {
+    const result = validateScriptCommand("ruby my-script.rb", ["python*"])
+    expect(result.valid).toBe(false)
+  })
+
+  it("allows interpreter when exact name coexists with patterns", () => {
+    const result = validateScriptCommand("node app.js", ["python*", "node"])
+    expect(result.valid).toBe(true)
+  })
+
+  it("allows interpreter matching a wildcard prefix pattern", () => {
+    const result = validateScriptCommand("deno run.ts", ["deno*"])
+    expect(result.valid).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Redirection hint
 // ---------------------------------------------------------------------------
 

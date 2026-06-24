@@ -697,7 +697,7 @@ describe("plugin — write lock for locked scripts", () => {
 // Unrestricted agents — bash restrictions bypass
 // ---------------------------------------------------------------------------
 
-describe("plugin — unrestricted agent bash bypass", () => {
+describe("plugin — trusted agent bash bypass", () => {
   const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
   const { join } = require("node:path")
   const testDir = "/tmp/test-project-agent-bypass"
@@ -709,7 +709,7 @@ describe("plugin — unrestricted agent bash bypass", () => {
       join(testDir, ".opencode", "bash-restricted.jsonc"),
       JSON.stringify({
         allow: { ls: {}, echo: {} },
-        unrestricted_agents: ["plan", "build"],
+        trusted_agents: ["plan", "build"],
         settings: { timeout_ms: 60000, workdir_policy: "project" },
       }),
       "utf-8"
@@ -781,17 +781,17 @@ describe("plugin — unrestricted agent bash bypass", () => {
     }
   })
 
-  it("still registers run_script tool when unrestricted_agents is configured", async () => {
+  it("still registers run_script tool when trusted_agents is configured", async () => {
     const hooks = await plugin(bypassInput)
     // run_script is registered only when script_interpreters is set,
     // which is NOT part of this fixture — so this test expects NO run_script.
-    // The point is: unrestricted_agents does NOT suppress run_script.
+    // The point is: trusted_agents does NOT suppress run_script.
     // True verification happens when script_interpreters is also set.
     expect(hooks.tool).not.toHaveProperty("run_script")
   })
 
-  it("registers run_script alongside unrestricted_agents when script_interpreters is present", async () => {
-    // Create a fixture with both unrestricted_agents and script_interpreters
+  it("registers run_script alongside trusted_agents when script_interpreters is present", async () => {
+    // Create a fixture with both trusted_agents and script_interpreters
     const fullDir = "/tmp/test-project-agent-bypass-with-scripts"
     rmSync(fullDir, { recursive: true, force: true })
     mkdirSync(join(fullDir, ".opencode"), { recursive: true })
@@ -799,7 +799,7 @@ describe("plugin — unrestricted agent bash bypass", () => {
       join(fullDir, ".opencode", "bash-restricted.jsonc"),
       JSON.stringify({
         allow: { ls: {}, echo: {} },
-        unrestricted_agents: ["plan"],
+        trusted_agents: ["plan"],
         script_interpreters: ["python", "node"],
         settings: { timeout_ms: 60000, workdir_policy: "project" },
       }),
@@ -878,6 +878,69 @@ describe("plugin — unrestricted agent bash bypass", () => {
       expect(result.metadata?.rejected).toBeUndefined()
       expect(result.exitCode).toBe(0)
       expect(result.output).toMatch(/hello-from-trusted-agent/)
+    }
+  })
+
+  it("trusted agent can run path-based commands (bypasses rbash path restriction)", async () => {
+    // rbash rejects command names containing '/', but trusted agents
+    // use regular bash with system PATH, so path-based commands work.
+    const hooks = await plugin(bypassInput)
+    const bashTool = hooks.tool!.bash
+
+    const result = await bashTool.execute(
+      { command: "/bin/echo hello-from-path-based-command" },
+      trustedContext
+    )
+
+    expect(result).toBeDefined()
+    if (typeof result !== "string") {
+      expect(result.metadata?.rejected).toBeUndefined()
+      expect(result.exitCode).toBe(0)
+      expect(result.output).toMatch(/hello-from-path-based-command/)
+    }
+  })
+
+  it("silently filters non-primary agents from trusted_agents at boot", async () => {
+    // When a non-primary agent is listed in trusted_agents, the plugin
+    // should silently exclude it so the agent is NOT treated as trusted.
+    const filterDir = "/tmp/test-project-agent-filter"
+    rmSync(filterDir, { recursive: true, force: true })
+    mkdirSync(join(filterDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(filterDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        trusted_agents: ["explore"],
+        agents: [
+          { name: "plan", mode: "primary" },
+          { name: "explore", mode: "subagent" },
+        ],
+        settings: { timeout_ms: 60000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+
+    try {
+      const hooks = await plugin({
+        ...MOCK_PLUGIN_INPUT,
+        directory: filterDir,
+        worktree: filterDir,
+      })
+      const bashTool = hooks.tool!.bash
+
+      // Agent "explore" is in trusted_agents but is a subagent — must be filtered out
+      const result = await bashTool.execute(
+        { command: "python3 my-script.py" },
+        { ...untrustedContext, directory: filterDir, worktree: filterDir }
+      )
+
+      expect(result).toBeDefined()
+      if (typeof result !== "string") {
+        // Must be rejected because "explore" was filtered from trusted list
+        expect(result.metadata?.rejected).toBe(true)
+      }
+    } finally {
+      rmSync(filterDir, { recursive: true, force: true })
     }
   })
 })

@@ -90,8 +90,15 @@ export async function initSymlinks(options: {
     }
   }
 
-  for (const execName of execNames) {
-    const realPath = await resolver.which(execName)
+  // Fire all which() calls in parallel to collapse sequential subprocess spawns
+  const execArray = Array.from(execNames)
+  const resolvedPaths = await Promise.all(
+    execArray.map((execName) => resolver.which(execName))
+  )
+
+  for (let i = 0; i < execArray.length; i++) {
+    const execName = execArray[i]
+    const realPath = resolvedPaths[i]
     if (realPath === null) {
       warnings.push(`Warning: '${execName}' not found in PATH — skipping symlink.`)
       continue

@@ -19,6 +19,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { homedir } from "node:os"
+import type { AgentDescriptor } from "./agent-auth.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +38,10 @@ export type Config = {
   scripts?: string[]
   script_interpreters?: string[]
   locked_scripts?: string[]
-  unrestricted_agents?: string[]
+  trusted_agents?: string[]
+  /** Agent descriptors with mode info, used at boot to filter trusted_agents
+   * to only primary-mode agents. */
+  agents?: AgentDescriptor[]
   settings?: {
     timeout_ms?: number
     workdir_policy?: string
@@ -192,17 +196,38 @@ function validateConfig(config: Config, source: string): void {
     }
   }
 
-  // Validate unrestricted_agents if present
-  if (config.unrestricted_agents !== undefined) {
-    if (!Array.isArray(config.unrestricted_agents)) {
+  // Validate trusted_agents if present
+  if (config.trusted_agents !== undefined) {
+    if (!Array.isArray(config.trusted_agents)) {
       throw new Error(
-        `Config at ${source}: unrestricted_agents must be an array of strings`
+        `Config at ${source}: trusted_agents must be an array of strings`
       )
     }
-    for (const item of config.unrestricted_agents) {
+    for (const item of config.trusted_agents) {
       if (typeof item !== "string") {
         throw new Error(
-          `Config at ${source}: unrestricted_agents entries must be strings, got ${typeof item}`
+          `Config at ${source}: trusted_agents entries must be strings, got ${typeof item}`
+        )
+      }
+    }
+  }
+
+  // Validate agents if present
+  if (config.agents !== undefined) {
+    if (!Array.isArray(config.agents)) {
+      throw new Error(
+        `Config at ${source}: agents must be an array`
+      )
+    }
+    for (const item of config.agents) {
+      if (
+        typeof item !== "object" ||
+        item === null ||
+        typeof item.name !== "string" ||
+        !["primary", "subagent", "all"].includes(item.mode)
+      ) {
+        throw new Error(
+          `Config at ${source}: each agent entry must have a string name and a mode of 'primary', 'subagent', or 'all'`
         )
       }
     }

@@ -12,8 +12,6 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.17.8",
-    "tree-sitter-bash": "^0.20.0",
-    "web-tree-sitter": "^0.20.0",
     "zod": "^4.1.8"
   },
   "devDependencies": {

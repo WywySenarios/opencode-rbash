@@ -363,13 +363,13 @@ describe("loadConfig — script_interpreters", () => {
 })
 
 // ---------------------------------------------------------------------------
-// loadConfig — unrestricted_agents
+// loadConfig — trusted_agents
 // ---------------------------------------------------------------------------
 
-describe("loadConfig — unrestricted_agents", () => {
+describe("loadConfig — trusted_agents", () => {
   const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
   const { join } = require("node:path")
-  const testDir = "/tmp/test-project-unrestricted-agents"
+  const testDir = "/tmp/test-project-trusted-agents"
 
   beforeAll(() => {
     rmSync(testDir, { recursive: true, force: true })
@@ -378,7 +378,7 @@ describe("loadConfig — unrestricted_agents", () => {
       join(testDir, ".opencode", "bash-restricted.jsonc"),
       JSON.stringify({
         allow: { ls: {}, echo: {} },
-        unrestricted_agents: ["plan", "build"],
+        trusted_agents: ["plan", "build"],
         settings: { timeout_ms: 120000, workdir_policy: "project" },
       }),
       "utf-8"
@@ -389,35 +389,33 @@ describe("loadConfig — unrestricted_agents", () => {
     rmSync(testDir, { recursive: true, force: true })
   })
 
-  it("loads config with unrestricted_agents array", () => {
-    // RED: Config type does not yet include unrestricted_agents.
-    // This test proves the field is not yet parsed/returned.
+  it("loads config with trusted_agents array", () => {
     const config = loadConfig({ projectRoot: testDir })
-    expect(config.unrestricted_agents).toBeDefined()
-    expect(Array.isArray(config.unrestricted_agents)).toBe(true)
+    expect(config.trusted_agents).toBeDefined()
+    expect(Array.isArray(config.trusted_agents)).toBe(true)
   })
 
-  it("preserves unrestricted_agents values in the parsed config", () => {
+  it("preserves trusted_agents values in the parsed config", () => {
     const config = loadConfig({ projectRoot: testDir })
-    expect(config.unrestricted_agents).toEqual(["plan", "build"])
+    expect(config.trusted_agents).toEqual(["plan", "build"])
   })
 
-  it("unrestricted_agents entries are strings", () => {
+  it("trusted_agents entries are strings", () => {
     const config = loadConfig({ projectRoot: testDir })
-    for (const name of config.unrestricted_agents!) {
+    for (const name of config.trusted_agents!) {
       expect(typeof name).toBe("string")
     }
   })
 
-  it("rejects unrestricted_agents with non-array values", () => {
-    const badDir = "/tmp/test-project-bad-unrestricted"
+  it("rejects trusted_agents with non-array values", () => {
+    const badDir = "/tmp/test-project-bad-trusted"
     rmSync(badDir, { recursive: true, force: true })
     mkdirSync(join(badDir, ".opencode"), { recursive: true })
     writeFileSync(
       join(badDir, ".opencode", "bash-restricted.jsonc"),
       JSON.stringify({
         allow: { ls: {}, echo: {} },
-        unrestricted_agents: "not-an-array",
+        trusted_agents: "not-an-array",
         settings: { timeout_ms: 120000, workdir_policy: "project" },
       }),
       "utf-8"
@@ -426,15 +424,138 @@ describe("loadConfig — unrestricted_agents", () => {
     rmSync(badDir, { recursive: true, force: true })
   })
 
-  it("rejects unrestricted_agents with non-string entries", () => {
-    const badDir = "/tmp/test-project-bad-unrestricted-entries"
+  it("rejects trusted_agents with non-string entries", () => {
+    const badDir = "/tmp/test-project-bad-trusted-entries"
     rmSync(badDir, { recursive: true, force: true })
     mkdirSync(join(badDir, ".opencode"), { recursive: true })
     writeFileSync(
       join(badDir, ".opencode", "bash-restricted.jsonc"),
       JSON.stringify({
         allow: { ls: {}, echo: {} },
-        unrestricted_agents: [123, true],
+        trusted_agents: [123, true],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// loadConfig — agents field
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — agents field", () => {
+  const { mkdirSync, writeFileSync, rmSync } = require("node:fs")
+  const { join } = require("node:path")
+  const testDir = "/tmp/test-project-config-agents"
+
+  beforeAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+    mkdirSync(join(testDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(testDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        agents: [
+          { name: "plan", mode: "primary" },
+          { name: "explore", mode: "subagent" },
+          { name: "general", mode: "all" },
+        ],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+  })
+
+  afterAll(() => {
+    rmSync(testDir, { recursive: true, force: true })
+  })
+
+  it("loads config with agents array", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    expect(config.agents).toBeDefined()
+    expect(Array.isArray(config.agents)).toBe(true)
+    expect(config.agents).toHaveLength(3)
+  })
+
+  it("preserves agent names and modes in parsed config", () => {
+    const config = loadConfig({ projectRoot: testDir })
+    expect(config.agents![0]).toEqual({ name: "plan", mode: "primary" })
+    expect(config.agents![1]).toEqual({ name: "explore", mode: "subagent" })
+    expect(config.agents![2]).toEqual({ name: "general", mode: "all" })
+  })
+
+  it("works alongside trusted_agents for filtering", () => {
+    const fullDir = "/tmp/test-project-config-agents-full"
+    rmSync(fullDir, { recursive: true, force: true })
+    mkdirSync(join(fullDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(fullDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        trusted_agents: ["plan", "explore"],
+        agents: [
+          { name: "plan", mode: "primary" },
+          { name: "explore", mode: "subagent" },
+        ],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    const config = loadConfig({ projectRoot: fullDir })
+    expect(config.trusted_agents).toEqual(["plan", "explore"])
+    expect(config.agents).toEqual([
+      { name: "plan", mode: "primary" },
+      { name: "explore", mode: "subagent" },
+    ])
+    rmSync(fullDir, { recursive: true, force: true })
+  })
+
+  it("rejects agents with non-array value", () => {
+    const badDir = "/tmp/test-project-bad-agents"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        agents: "not-an-array",
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+
+  it("rejects agents with invalid entry (missing name)", () => {
+    const badDir = "/tmp/test-project-bad-agents-missing-name"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        agents: [{ mode: "primary" }],
+        settings: { timeout_ms: 120000, workdir_policy: "project" },
+      }),
+      "utf-8"
+    )
+    expect(() => loadConfig({ projectRoot: badDir })).toThrow()
+    rmSync(badDir, { recursive: true, force: true })
+  })
+
+  it("rejects agents with invalid entry (bad mode)", () => {
+    const badDir = "/tmp/test-project-bad-agents-mode"
+    rmSync(badDir, { recursive: true, force: true })
+    mkdirSync(join(badDir, ".opencode"), { recursive: true })
+    writeFileSync(
+      join(badDir, ".opencode", "bash-restricted.jsonc"),
+      JSON.stringify({
+        allow: { ls: {}, echo: {} },
+        agents: [{ name: "plan", mode: "invalid-mode" }],
         settings: { timeout_ms: 120000, workdir_policy: "project" },
       }),
       "utf-8"
