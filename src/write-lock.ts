@@ -21,7 +21,7 @@ export type WriteLockInput = {
 }
 
 export type WriteLockOutput = {
-  args: any
+  args: Record<string, unknown>
 }
 
 export type WriteLockHandler = (

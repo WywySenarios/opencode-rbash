@@ -92,8 +92,8 @@ function readConfigFileSync(path: string): Config | null {
   try {
     const raw = readFileSync(path, "utf-8")
     const cleaned = preprocessJsonc(raw)
-    const parsed = JSON.parse(cleaned)
-    return parsed
+    const parsed: unknown = JSON.parse(cleaned)
+    return parsed as Config | null
   } catch (err) {
     if (err instanceof SyntaxError) {
       throw new Error(
@@ -318,10 +318,11 @@ function normalizeAllowlist(raw: unknown, source: string): AllowConfig {
 function loadFromPath(path: string): Config | null {
   const raw = readConfigFileSync(path)
   if (!raw) return null
-  const bag = raw as Record<string, unknown>
-  bag.allow = normalizeAllowlist(bag.allow, path)
-  validateConfig(bag as Config, path)
-  return applyDefaults(bag as Config)
+  // raw.allow may be AllowConfig or string[] — normalizeAllowlist handles both
+  const allow = normalizeAllowlist((raw as { allow: unknown }).allow, path)
+  const config: Config = { ...raw, allow }
+  validateConfig(config, path)
+  return applyDefaults(config)
 }
 
 // Cache keyed by projectRoot (and optionally globalConfigPath) so repeated
