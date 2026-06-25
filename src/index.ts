@@ -31,10 +31,12 @@ const RBASH_PATH = "/usr/bin/rbash"
 const BASH_PATH = "/bin/bash"
 
 // ---------------------------------------------------------------------------
-// Input schema
+// Input schema — individual ZodType values forming a ZodRawShape.
+// Intentionally NOT wrapped in z.object() to avoid Zod 4's enumerable
+// `def`/`type` property leak on ZodObject instances (github #28704).
 // ---------------------------------------------------------------------------
 
-const InputSchema = z.object({
+const inputShape = {
   command: z
     .string()
     .min(1, "Command must not be empty")
@@ -77,7 +79,7 @@ const InputSchema = z.object({
     .describe(
       "Docker container name. When specified, the command is executed inside the container via docker exec."
     ),
-})
+} as const satisfies z.ZodRawShape
 
 // ---------------------------------------------------------------------------
 // System helpers
@@ -345,12 +347,11 @@ const plugin: Plugin = async (input) => {
   const tools: Record<string, ReturnType<typeof tool>> = {
     bash: tool({
       description: buildDescription(cachedConfig),
-      // CONVENTION-EXCEPTION: typescript.mdx - Type assertion necessary because
-      // the test expects args to be a ZodObject (with ._def and .safeParse()),
-      // but tool()'s type expects ZodRawShape. At runtime both work.
-      args: InputSchema as unknown as z.ZodRawShape,
+      // ZodRawShape — individual ZodType values, no z.object() wrapper
+      // (avoids enumuerable `def`/`type` property leak, github #28704).
+      args: inputShape,
       async execute(
-        args: z.infer<typeof InputSchema>,
+        args: z.infer<z.ZodObject<typeof inputShape>>,
         ctx: ToolContext
       ): Promise<ToolResult> {
         const projectRoot = ctx.worktree || ctx.directory
@@ -413,9 +414,9 @@ const plugin: Plugin = async (input) => {
   ) {
     tools[SCRIPTS_TOOL_NAME] = tool({
       description: buildScriptToolDescription(cachedConfig),
-      args: InputSchema as unknown as z.ZodRawShape,
+      args: inputShape,
       async execute(
-        args: z.infer<typeof InputSchema>,
+        args: z.infer<z.ZodObject<typeof inputShape>>,
         ctx: ToolContext
       ): Promise<ToolResult> {
         const projectRoot = ctx.worktree || ctx.directory

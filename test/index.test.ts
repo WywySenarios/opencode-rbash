@@ -64,14 +64,17 @@ describe("plugin — tool definition", () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
     const bashTool = hooks.tool!.bash
     expect(bashTool.args).toBeDefined()
-    expect(bashTool.args._def).toBeDefined() // is a Zod schema
+    // args is a ZodRawShape (plain object of individual ZodType values).
+    // Each field value is a Zod schema — _zod is on the value, not the container.
+    expect(bashTool.args).toHaveProperty("command")
+    expect((bashTool.args as any).command._zod).toBeDefined()
   })
 
   it("tool args schema includes an optional container field", async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
     const bashTool = hooks.tool!.bash
-    const args = bashTool.args as z.ZodObject<any>
-    expect(args.shape).toHaveProperty("container")
+    // args is a ZodRawShape — container is a top-level key, not inside .shape
+    expect(bashTool.args).toHaveProperty("container")
   })
 
   it("tool has an execute function", async () => {
@@ -161,35 +164,37 @@ describe("plugin — tool definition", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — input schema", () => {
-  let bashArgs: z.ZodObject<any>
+  let bashArgs: Record<string, z.ZodType>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
-    bashArgs = hooks.tool!.bash.args as z.ZodObject<any>
+    // args is a ZodRawShape (plain object of ZodType values), not a ZodObject.
+    // Wrap via z.object() when validation is needed.
+    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
   })
 
   it("accepts a valid command", () => {
-    const result = bashArgs.safeParse({ command: "ls -la" })
+    const result = z.object(bashArgs).safeParse({ command: "ls -la" })
     expect(result.success).toBe(true)
   })
 
   it("rejects missing command", () => {
-    const result = bashArgs.safeParse({})
+    const result = z.object(bashArgs).safeParse({})
     expect(result.success).toBe(false)
   })
 
   it("rejects empty command", () => {
-    const result = bashArgs.safeParse({ command: "" })
+    const result = z.object(bashArgs).safeParse({ command: "" })
     expect(result.success).toBe(false)
   })
 
   it("rejects non-string command", () => {
-    const result = bashArgs.safeParse({ command: 123 })
+    const result = z.object(bashArgs).safeParse({ command: 123 })
     expect(result.success).toBe(false)
   })
 
   it("accepts command with all optional fields", () => {
-    const result = bashArgs.safeParse({
+    const result = z.object(bashArgs).safeParse({
       command: "git status",
       description: "Check git status",
       workdir: "./src",
@@ -201,12 +206,12 @@ describe("plugin — input schema", () => {
   })
 
   it("accepts command with only command field", () => {
-    const result = bashArgs.safeParse({ command: "echo hi" })
+    const result = z.object(bashArgs).safeParse({ command: "echo hi" })
     expect(result.success).toBe(true)
   })
 
   it("accepts optional description field", () => {
-    const result = bashArgs.safeParse({
+    const result = z.object(bashArgs).safeParse({
       command: "ls -la",
       description: "List files with details",
     })
@@ -214,7 +219,7 @@ describe("plugin — input schema", () => {
   })
 
   it("accepts optional workdir field", () => {
-    const result = bashArgs.safeParse({
+    const result = z.object(bashArgs).safeParse({
       command: "ls",
       workdir: "/some/dir",
     })
@@ -222,7 +227,7 @@ describe("plugin — input schema", () => {
   })
 
   it("accepts optional container field as a string", () => {
-    const result = bashArgs.safeParse({
+    const result = z.object(bashArgs).safeParse({
       command: "ls -la",
       container: "my-container",
     })
@@ -234,8 +239,36 @@ describe("plugin — input schema", () => {
   })
 
   it("command without container parses successfully for backward compatibility", () => {
-    const result = bashArgs.safeParse({ command: "ls" })
+    const result = z.object(bashArgs).safeParse({ command: "ls" })
     expect(result.success).toBe(true)
+  })
+
+  // -----------------------------------------------------------------------
+  // Regression: bug where `Object.entries(zodObject)` in the registry's
+  // `fromPlugin()` picked up Zod 4's internal `def` property, producing a
+  // corrupt JSON Schema with `def` as the only parameter. The LLM then sent
+  // `{ def: { command: "..." } }` and the tool crashed with `command: undefined`.
+  //
+  // These tests guarantee:
+  //   1. The correct input shape (`{ command: "ls" }`) is accepted.
+  //   2. The wrong input shape (`{ def: { command: "ls" } }`) is rejected.
+  //   3. `Object.keys(args)` yields only real fields, NOT `def`.
+  //
+  // With ZodRawShape (plain object) instead of ZodObject, the `def`/`type`
+  // enumerable properties never appear at the top level — the regression is
+  // structurally prevented. These tests remain as a safety net.
+  // -----------------------------------------------------------------------
+
+  it("rejects def-wrapped command (regression: def-key bug)", () => {
+    const result = z.object(bashArgs).safeParse({ def: { command: "ls" } })
+    expect(result.success).toBe(false)
+  })
+
+  it("shape entries do not include Zod internal 'def' property (regression: def-key bug)", () => {
+    // bashArgs is a plain object — Object.keys() only yields our field names.
+    const keys = Object.keys(bashArgs)
+    expect(keys).not.toContain("def")
+    expect(keys).not.toContain("type")
   })
 })
 
@@ -244,40 +277,40 @@ describe("plugin — input schema", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — timeout validation", () => {
-  let bashArgs: z.ZodObject<any>
+  let bashArgs: Record<string, z.ZodType>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
-    bashArgs = hooks.tool!.bash.args as z.ZodObject<any>
+    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
   })
 
   it("rejects negative timeout", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: -1 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: -1 })
     expect(result.success).toBe(false)
   })
 
   it("rejects zero timeout", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: 0 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: 0 })
     expect(result.success).toBe(false)
   })
 
   it("rejects float timeout", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: 60.5 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: 60.5 })
     expect(result.success).toBe(false)
   })
 
   it("rejects timeout over max (600000ms)", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: 600001 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: 600001 })
     expect(result.success).toBe(false)
   })
 
   it("accepts timeout exactly at max boundary", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: 600000 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: 600000 })
     expect(result.success).toBe(true)
   })
 
   it("accepts valid timeout values", () => {
-    const result = bashArgs.safeParse({ command: "echo", timeout: 120000 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", timeout: 120000 })
     expect(result.success).toBe(true)
   })
 })
@@ -287,50 +320,50 @@ describe("plugin — timeout validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — max_lines / max_bytes validation", () => {
-  let bashArgs: z.ZodObject<any>
+  let bashArgs: Record<string, z.ZodType>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
-    bashArgs = hooks.tool!.bash.args as z.ZodObject<any>
+    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
   })
 
   it("rejects negative max_lines", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_lines: -5 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_lines: -5 })
     expect(result.success).toBe(false)
   })
 
   it("rejects zero max_lines", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_lines: 0 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_lines: 0 })
     expect(result.success).toBe(false)
   })
 
   it("accepts positive max_lines", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_lines: 10 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_lines: 10 })
     expect(result.success).toBe(true)
   })
 
   it("rejects negative max_bytes", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_bytes: -100 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_bytes: -100 })
     expect(result.success).toBe(false)
   })
 
   it("rejects zero max_bytes", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_bytes: 0 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_bytes: 0 })
     expect(result.success).toBe(false)
   })
 
   it("rejects max_bytes over 10MB (10485760)", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_bytes: 10485761 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_bytes: 10485761 })
     expect(result.success).toBe(false)
   })
 
   it("accepts max_bytes at 10MB boundary", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_bytes: 10485760 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_bytes: 10485760 })
     expect(result.success).toBe(true)
   })
 
   it("accepts valid max_bytes", () => {
-    const result = bashArgs.safeParse({ command: "echo", max_bytes: 1024 })
+    const result = z.object(bashArgs).safeParse({ command: "echo", max_bytes: 1024 })
     expect(result.success).toBe(true)
   })
 })
