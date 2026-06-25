@@ -10,8 +10,8 @@
  * - Multiple independent subshells
  */
 
-import { validateCommand } from "../src/validate"
-import type { AllowConfig } from "../src/config"
+import { validateCommand } from "../src/validate.js"
+import type { AllowConfig } from "../src/config.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

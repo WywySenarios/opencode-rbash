@@ -15,7 +15,7 @@ import { resolve } from "node:path"
 
 // The helper — will fail to import until implemented
 import { createWriteLock } from "../src/write-lock.js"
-import { initSymlinks, type ExecutableResolver } from "../src/init"
+import { initSymlinks, type ExecutableResolver } from "../src/init.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

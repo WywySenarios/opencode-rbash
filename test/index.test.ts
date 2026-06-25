@@ -9,9 +9,12 @@
  * - Plugin function signature matches expected Plugin type
  */
 import { describe, it, expect, vi } from "vitest"
-import { z } from "zod"
-import plugin from "../src/index"
-import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+import { tool } from "@opencode-ai/plugin/tool"
+import plugin from "../src/index.js"
+import type { Hooks, PluginInput, ToolResult } from "@opencode-ai/plugin"
+
+// Use the plugin SDK's zod instance for type compatibility with the tool args
+const z = tool.schema
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -164,13 +167,13 @@ describe("plugin — tool definition", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — input schema", () => {
-  let bashArgs: Record<string, z.ZodType>
+  let bashArgs: NonNullable<Parameters<typeof z.object>[0]>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
     // args is a ZodRawShape (plain object of ZodType values), not a ZodObject.
     // Wrap via z.object() when validation is needed.
-    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
+    bashArgs = hooks.tool!.bash.args
   })
 
   it("accepts a valid command", () => {
@@ -277,11 +280,11 @@ describe("plugin — input schema", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — timeout validation", () => {
-  let bashArgs: Record<string, z.ZodType>
+  let bashArgs: NonNullable<Parameters<typeof z.object>[0]>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
-    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
+    bashArgs = hooks.tool!.bash.args
   })
 
   it("rejects negative timeout", () => {
@@ -320,11 +323,11 @@ describe("plugin — timeout validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("plugin — max_lines / max_bytes validation", () => {
-  let bashArgs: Record<string, z.ZodType>
+  let bashArgs: NonNullable<Parameters<typeof z.object>[0]>
 
   beforeAll(async () => {
     const hooks = await plugin(MOCK_PLUGIN_INPUT)
-    bashArgs = hooks.tool!.bash.args as Record<string, z.ZodType>
+    bashArgs = hooks.tool!.bash.args
   })
 
   it("rejects negative max_lines", () => {
@@ -625,7 +628,7 @@ describe("plugin — run_script tool", () => {
       expect(result).toBeDefined()
       if (typeof result !== "string") {
         // Script should execute successfully (exit code 0)
-        expect(result.exitCode).toBe(0)
+        expect((result as ToolResult & { exitCode?: number }).exitCode).toBe(0)
         // Script output should be captured
         expect(result.output).toMatch(/hello-from-script/)
       }
@@ -909,7 +912,7 @@ describe("plugin — trusted agent bash bypass", () => {
       // Rejected commands have metadata.rejected=true and lack exitCode.
       // Properly executed commands have exitCode and capture output.
       expect(result.metadata?.rejected).toBeUndefined()
-      expect(result.exitCode).toBe(0)
+      expect((result as ToolResult & { exitCode?: number }).exitCode).toBe(0)
       expect(result.output).toMatch(/hello-from-trusted-agent/)
     }
   })
@@ -928,7 +931,7 @@ describe("plugin — trusted agent bash bypass", () => {
     expect(result).toBeDefined()
     if (typeof result !== "string") {
       expect(result.metadata?.rejected).toBeUndefined()
-      expect(result.exitCode).toBe(0)
+      expect((result as ToolResult & { exitCode?: number }).exitCode).toBe(0)
       expect(result.output).toMatch(/hello-from-path-based-command/)
     }
   })

@@ -15,7 +15,7 @@ import {
   filterTrustedAgents,
   isTrustedAgent,
   type AgentDescriptor,
-} from "../src/agent-auth"
+} from "../src/agent-auth.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

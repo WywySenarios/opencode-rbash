@@ -10,8 +10,8 @@
  * - Hash-based directory naming
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest"
-import { initSymlinks, type ExecutableResolver, type InitResult } from "../src/init"
-import type { Config } from "../src/config"
+import { initSymlinks, type ExecutableResolver, type InitResult } from "../src/init.js"
+import type { Config } from "../src/config.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

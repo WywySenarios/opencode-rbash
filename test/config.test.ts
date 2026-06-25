@@ -9,8 +9,8 @@
  * - pipe_to rule parsing
  */
 
-import { loadConfig, type Config, type AllowConfig } from "../src/config"
-import { validateCommand } from "../src/validate"
+import { loadConfig, type Config, type AllowConfig } from "../src/config.js"
+import { validateCommand } from "../src/validate.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

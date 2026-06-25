@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect } from "vitest"
-import { validateScriptCommand } from "../src/scripts"
-import type { ValidationResult } from "../src/scripts"
+import { validateScriptCommand } from "../src/scripts.js"
+import type { ValidationResult } from "../src/scripts.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

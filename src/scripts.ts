@@ -105,4 +105,5 @@ export function validateScriptCommand(
   return { valid: true }
 }
 
+export type { ValidationResult } from "./validate.js"
 export { SCRIPTS_TOOL_NAME }

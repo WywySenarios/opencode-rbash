@@ -11,8 +11,8 @@
  * - Workdir resolution
  */
 import { describe, it, expect, vi } from "vitest"
-import { executeCommand, type ExecuteOptions, type ExecuteResult } from "../src/execute"
-import type { Config } from "../src/config"
+import { executeCommand, type ExecuteOptions, type ExecuteResult } from "../src/execute.js"
+import type { Config } from "../src/config.js"
 
 // ---------------------------------------------------------------------------
 // Fixtures

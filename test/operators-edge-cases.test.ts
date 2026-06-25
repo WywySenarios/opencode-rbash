@@ -10,8 +10,8 @@
  * serving as the RED specification.
  */
 
-import { validateCommand } from "../src/validate"
-import type { AllowConfig } from "../src/config"
+import { validateCommand } from "../src/validate.js"
+import type { AllowConfig } from "../src/config.js"
 
 const ALLOWLIST: AllowConfig = {
   ls: {},
